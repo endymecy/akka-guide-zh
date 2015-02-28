@@ -5,7 +5,7 @@
 Akka 可以有几种使用方式:
 
 - 作为一个库: 以普通jar包的形式放在classpath上，或放到web应用中的 WEB-INF/lib位置
--作为一个独立的应用程序，使用 Microkernel（微内核），自己有一个main类来初始化Actor系统
+- 作为一个独立的应用程序，使用 Microkernel（微内核），自己有一个main类来初始化Actor系统
 
 ### 将Akka作为一个库
 
