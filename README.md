@@ -8,6 +8,7 @@
     * [Akka使用实例](introduce/examples-of-use-cases-for-Akka.md)
 * [概述](general/actor-systems.md)
     * [Actor系统](general/actor-systems.md)
+    * [什么是Actor](general/what-is-an-actor.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
