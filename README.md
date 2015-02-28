@@ -13,6 +13,8 @@
     * [Actor引用，路径和地址](general/actor-references-paths-and-addresses.md)
     * [位置透明性](general/location-transparency.md)
     * [Akka和Java内存模型](general/akka-and-the-java-memory-model.md)
+    * [消息发送语义](general/message-delivery-reliability.md)
+    * [配置](general/configuration.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
