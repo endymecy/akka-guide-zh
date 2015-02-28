@@ -29,29 +29,29 @@ appConfig.withFallback(ConfigFactory.defaultReference(classLoader))
 
 一个自定义的`application.conf`可能如下所示：
 
-```json
-# In this file you can override any option defined in the reference files.
-# Copy in parts of the reference files and modify as you please.
+```
+// In this file you can override any option defined in the reference files.
+// Copy in parts of the reference files and modify as you please.
 akka {
-  # Loggers to register at boot time (akka.event.Logging$DefaultLogger logs
-  # to STDOUT)
+  // Loggers to register at boot time (akka.event.Logging$DefaultLogger logs
+  // to STDOUT)
   loggers = ["akka.event.slf4j.Slf4jLogger"]
-  # Log level used by the configured loggers (see "loggers") as soon
-  # as they have been started; before that, see "stdout-loglevel"
-  # Options: OFF, ERROR, WARNING, INFO, DEBUG
+  // Log level used by the configured loggers (see "loggers") as soon
+  // as they have been started; before that, see "stdout-loglevel"
+  // Options: OFF, ERROR, WARNING, INFO, DEBUG
   loglevel = "DEBUG"
-  # Log level for the very basic logger activated during ActorSystem startup.
-  # This logger prints the log messages to stdout (System.out).
-  # Options: OFF, ERROR, WARNING, INFO, DEBUG
+  // Log level for the very basic logger activated during ActorSystem startup.
+  // This logger prints the log messages to stdout (System.out).
+  // Options: OFF, ERROR, WARNING, INFO, DEBUG
   stdout-loglevel = "DEBUG"
   actor {
     provider = "akka.cluster.ClusterActorRefProvider"
     default-dispatcher {
-      # Throughput for default Dispatcher, set to 1 for as fair as possible
+      // Throughput for default Dispatcher, set to 1 for as fair as possible
       throughput = 10
 } }
   remote {
-    # The port clients should connect to. Default is 2552.
+    // The port clients should connect to. Default is 2552.
     netty.tcp.port = 4711
 } }
 
