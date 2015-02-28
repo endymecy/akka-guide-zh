@@ -106,4 +106,65 @@ res1: java.lang.String =
 
 在配置文件的某些地方可以指定要被Akka实例化的类的全路径。这是通过Java反射来实现的，会用到类加载器。在应用窗口或OSBi包里正确地使用它并不总是容易的事，目前Akka采取的方式是每个`ActorSystem`实现存有当前线程的上下文类加载器 (如果有的话，否则使用`this.getClass.getClassLoader`的返回值) 并用它来进行所有的反射操作。这意味着把Akka放到启动类路径中会在一些莫名其妙的地方造成`NullPointerException`：这是不被支持的。
 
+## 配置多个ActorSystem
 
+如果你有超过一个ActorSystem，你可能为每个系统分开进行配置。
+
+由于 ConfigFactory.load() 会合并classpath中所有匹配名称的资源, 最简单的方式是利用这一功能在配置树中区分actor系统:
+
+```scala
+myapp1 {
+  akka.loglevel = "WARNING"
+  my.own.setting = 43
+}
+myapp2 {
+  akka.loglevel = "ERROR"
+  app2.setting = "appname"
+}
+my.own.setting = 42
+my.other.setting = "hello"
+```
+
+```scala
+val config = ConfigFactory.load()
+val app1 = ActorSystem("MyApp1", config.getConfig("myapp1").withFallback(config))
+val app2 = ActorSystem("MyApp2",config.getConfig("myapp2").withOnlyPath("akka").withFallback(config))
+```
+
+这两个例子演示了“提升子树”(lift-a-subtree)技巧的不同变种: 第一种中，actor system获得的配置是
+
+```scala
+akka.loglevel = "WARNING"
+my.own.setting = 43
+my.other.setting = "hello"
+// plus myapp1 and myapp2 subtrees
+```
+
+而在第二种中，只有 “akka” 子树被提升了，结果如下:
+
+```scala
+akka.loglevel = "ERROR"
+my.own.setting = 42
+my.other.setting = "hello"
+// plus myapp1 and myapp2 subtrees
+```
+
+*注意：这个配置文件库非常强大，这里不可能解释所有的功能. 特别是如何在配置文件中引用其它的配置文件 (例子见 包含文件) 和通过路径替换来复制部分配置信。*
+
+初始化ActorSystem时，你也可以通过代码来指定和处理配置信息。
+
+```scala
+import akka.actor.ActorSystem
+import com.typesafe.config.ConfigFactory
+    val customConf = ConfigFactory.parseString("""
+      akka.actor.deployment {
+        /my-service {
+          router = round-robin
+          nr-of-instances = 3
+        }
+      }
+      """)
+    // ConfigFactory.load sandwiches customConfig between default reference
+    // config and default overrides, and then resolves it.
+    val system = ActorSystem("MySystem", ConfigFactory.load(customConf))
+```
