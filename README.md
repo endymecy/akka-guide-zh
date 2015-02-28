@@ -11,6 +11,7 @@
     * [什么是Actor](general/what-is-an-actor.md)
     * [监管和重启](general/supervision-and-monitoring.md)
     * [Actor引用，路径和地址](general/actor-references-paths-and-addresses.md)
+    * [位置透明性](general/location-transparency.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
