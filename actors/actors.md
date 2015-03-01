@@ -4,7 +4,7 @@
 
 Akka Actor的API与Scala Actor类似，并且从Erlang中借用了一些语法。
 
-## 创建Actor
+## 1 创建Actor
 
 *注：由于Akka采用强制性的父子监管，每一个actor都被监管着，并且会监管它的子actors；我们建议你熟悉一下[Actor系统](general/actor-systems)和[监管与监控](general/supervision-and-monitoring.md)*
 
@@ -148,7 +148,7 @@ class DependencyInjector(applicationContext: AnyRef, beanName: String)
  i watch target
 ```
 
-## Actor API
+## 2 Actor API
 
 `Actor` trait 只定义了一个抽象方法，就是上面提到的`receive`, 用来实现actor的行为。
 
@@ -197,6 +197,348 @@ def postRestart(reason: Throwable): Unit = {
 
 以上所示的实现是`Actor` trait 的缺省实现。
     
+### Actor 生命周期
+
+![actor lifecycle](../imgs/actor_lifecycle.png)
+
+在actor系统中，一个路径代表一个“位置（place）”，这个位置被一个存活的actor占据。path被初始化为空。当调用`actorOf()`时，它分配一个actor的incarnation给给定的path。一个actor incarnation通过path和一个UID来识别。重启仅仅会交换通过Props定义的actor实例，它的实体以及UID不会改变。
+
+当actor停止是，它的incarnation的生命周期结束。在那时，适当的生命周期事件被调用，终止的观察actor被通知。actor incarnation停止后，通过`actorOf()`创建actor时，path可以被重用。在这种情况下，新的incarnation的名字和之前的incarnation的名字是相同的，不同的是它们的UID。
+
+一个`ActorRef`总是表示incarnation而不仅仅是path。因此，如果一个actor被停止，拥有相同名字的新的actor被创建。旧的incarnation的ActorRef不会指向新的Actor。
+
+另一方面，`ActorSelection`指向path（如果用到占位符，是多个path），它完全不知道哪一个incarnation占有它。正是因为这个原因，`ActorSelection`无法被观察。通过发送一个`Identify`消息到`ActorSelection`可以解析当前incarnation存活在path下的`ActorRef`。这个`ActorSelection`将会被回复一个包含正确引用的`ActorIdentity`。这也可以通过`ActorSelection`的`resolveOne`方法实现，这个方法返回一个匹配`ActorRef`的`Future`。
+
+### 使用DeathWatch进行生命周期监控
+
+为了在其它actor结束时 (永久终止, 而不是临时的失败和重启)收到通知, actor可以将自己注册为其它actor在终止时所发布的`Terminated`消息的接收者。 这个服务是由actor系统的`DeathWatch`组件提供的。
+
+注册一个监控器很简单：
+
+```scala
+import akka.actor.{ Actor, Props, Terminated }
+class WatchActor extends Actor {
+  val child = context.actorOf(Props.empty, "child")
+  context.watch(child) // <-- this is the only call needed for registration
+  var lastSender = system.deadLetters
+  def receive = {
+    case "kill" =>
+      context.stop(child); lastSender = sender()
+    case Terminated(‘child‘) => lastSender ! "finished"
+} }
+```
+
+要注意`Terminated`消息的产生与注册和终止行为所发生的顺序无关。特别是，观察actor将会接收到一个`Terminated`消息，即使观察actor在注册时已经终止了。
+
+多次注册并不表示会有多个消息产生，也不保证有且只有一个这样的消息被接收到：如果被监控的actor已经生成了消息并且已经进入了队列，在这个消息被处理之前又发生了另一次注册，则会有第二个消息进入队列，因为一个已经终止的actor注册监控器会立刻导致`Terminated`消息的发生。
+
+可以使用`context.unwatch(target)`来停止对另一个actor的生存状态的监控, 但很明显这不能保证不会接收到`Terminated`消息因为该消息可能已经进入了队列。
+
+### 启动 Hook
+
+actor启动后，它的`preStart`会被立即执行。
+
+```scala
+￼override def preStart() {
+  child = context.actorOf(Props[MyActor], "child")
+}
+```
+当actor第一次被创建时，该方法会被调用。在重启的过程中，它会在`postRestart`的默认实现中调用，这意味着，对于这个actor或者每一个重启，重写那个方法你可以决定初始化代码是否被仅仅调用一次。当创建一个actor实例时，作为actor构造器一部分的初始化代码（在每一次重启时发生）总是被调用。
+
+### 重启 Hook
+
+所有的Actor都是被监管的，以某种失败处理策略与另一个actor链接在一起。 如果在处理一个消息的时候抛出的异常，Actor将被重启。这个重启过程包括上面提到的Hook:
+
+- 要被重启的actor的`preRestart`被调用，携带着导致重启的异常以及触发异常的消息; 如果重启并不是因为消息的处理而发生的，所携带的消息为 None , 例如，当一个监管者没有处理某个异常继而被它自己的监管者重启时。 这个方法是用来完成清理、准备移交给新的actor实例的最佳位置。它的缺省实现是终止所有的子actor并调用`postStop`。
+- 最初 actorOf 调用的工厂方法将被用来创建新的实例。
+- 新的actor的 postRestart 方法被调用，携带着导致重启的异常信息。默认情况下，`preStart`被调用。
+
+actor的重启会替换掉原来的actor对象; 重启不影响邮箱的内容, 所以对消息的处理将在`postRestart hook`返回后继续。 触发异常的消息不会被重新接收。在actor重启过程中所有发送到该actor的消息将象平常一样被放进邮箱队列中。
+
+### 终止 Hook
+
+一个Actor终止后，它的`postStop hook`将被调用, 这可以用来取消该actor在其它服务中的注册。这个hook保证在该actor的消息队列被禁止后才运行， i.e. 之后发给该actor的消息将被重定向到`ActorSystem`的`deadLetters`中。
+
+## 3 通过Actor Selection识别actor
+
+
+
+## 4 消息与不可变性
+
+`IMPORTANT`: 消息可以是任何类型的对象，但必须是不可变的。目前Scala还无法强制不可变性，所以这一点必须作为约定。String, Int, Boolean这些原始类型总是不可变的。 除了它们以外，推荐的做法是使用`Scala case class`，它们是不可变的（如果你不专门暴露数据的话），并与接收方的模式匹配配合得非常好。
+
+以下是一个例子:
+
+```scala
+// define the case class
+case class Register(user: User)
+// create a new case class message
+val message = Register(user)
+```
+
+## 5 发送消息
+
+向actor发送消息是使用下列方法之一：
+
+- `!` 意思是“fire-and-forget”，表示异步发送一个消息并立即返回。也称为`tell`。
+- `?` 异步发送一条消息并返回一个 Future代表一个可能的回应。也称为`ask`。
+
+每一个消息发送者分别保证自己的消息的次序。
+
+### Tell: Fire-forget
+
+这是发送消息的推荐方式。不会阻塞地等待消息。它拥有最好的并发性和可扩展性。
+
+```scala
+actorRef ! message
+```
+如果是在一个Actor中调用，那么发送方的actor引用会被隐式地作为消息的`sender(): ActorRef`成员一起发送。目的actor可以使用它来向原actor发送回应，使用`sender() ! replyMsg`。
+
+如果不是从Actor实例发送的，sender缺省为`deadLetters` actor引用。
+
+### Ask: Send-And-Receive-Future
+
+ask模式既包含actor也包含future, 所以它是作为一种使用模式，而不是ActorRef的方法:
+
+```scala
+import akka.pattern.{ ask, pipe }
+import system.dispatcher // The ExecutionContext that will be used
+case class Result(x: Int, s: String, d: Double)
+case object Request
+implicit val timeout = Timeout(5 seconds) // needed for ‘?‘ below
+val f: Future[Result] =
+  for {
+    x <- ask(actorA, Request).mapTo[Int] // call pattern directly
+    s <- (actorB ask Request).mapTo[String] // call by implicit conversion
+    d <- (actorC ? Request).mapTo[Double] // call by symbolic name
+  } yield Result(x, s, d)
+f pipeTo actorD // .. or ..
+pipe(f) to actorD
+```
+上面的例子展示了将 ask 与future上的`pipeTo`模式一起使用，因为这是一种非常常用的组合。 请注意上面所有的调用都是完全非阻塞和异步的：`ask` 产生 `Future`, 三个Future通过for-语法组合成一个新的Future，然后用`pipeTo`在future上安装一个onComplete-处理器来完成将收集到的`Result`发送到其它actor的动作。
+
+使用`ask`将会象`tell`一样发送消息给接收方, 接收方必须通过`sender ! reply`发送回应来为返回的`Future`填充数据。`ask`操作包括创建一个内部actor来处理回应，必须为这个内部actor指定一个超时期限，过了超时期限内部actor将被销毁以防止内存泄露。
+
+*注意：如果要以异常来填充future你需要发送一个 Failure 消息给发送方。这个操作不会在actor处理消息发生异常时自动完成。*
+
+```scala
+try {
+  val result = operation()
+  sender() ! result
+} catch {
+  case e: Exception =>
+    sender() ! akka.actor.Status.Failure(e)
+throw e }
+```
+如果一个actor没有完成future, 它会在超时时限到来时过期， 以`AskTimeoutException`来结束。超时的时限是按下面的顺序和位置来获取的:
+
+- 显式指定超时:
+
+```scala
+￼import scala.concurrent.duration._
+ import akka.pattern.ask
+ val future = myActor.ask("hello")(5 seconds)
+```
+- 提供类型为`akka.util.Timeout`的隐式参数, 例如，
+
+```scala
+import scala.concurrent.duration._
+import akka.util.Timeout
+import akka.pattern.ask
+implicit val timeout = Timeout(5 seconds)
+val future = myActor ? "hello"
+```
+
+Future的`onComplete`, `onResult`, 或 `onTimeout`方法可以用来注册一个回调，以便在Future完成时得到通知。从而提供一种避免阻塞的方法。
+
+*注意：在使用future回调如`onComplete`, `onSuccess`,和`onFailure`时, 在actor内部你要小心避免捕捉该actor的引用, 也就是不要在回调中调用该actor的方法或访问其可变状态。这会破坏actor的封装，会引起同步bug和race condition, 因为回调会与此actor一同被并发调度。不幸的是目前还没有一种编译时的方法能够探测到这种非法访问。*
+
+### 转发消息
+
+你可以将消息从一个actor转发给另一个。虽然经过了一个‘中转’，但最初的发送者地址/引用将保持不变。当实现功能类似路由器、负载均衡器、备份等的actor时会很有用。
+
+```scala
+target forward message
+```
+## 6 接收消息
+
+Actor必须实现`receive`方法来接收消息：
+```scala
+￼type Receive = PartialFunction[Any, Unit]
+ def receive: Actor.Receive
+```
+这个方法应返回一个`PartialFunction`, 例如 一个 ‘match/case’ 子句，消息可以与其中的不同分支进行scala模式匹配。如下例:
+
+```scala
+import akka.actor.Actor
+import akka.actor.Props
+import akka.event.Logging
+class MyActor extends Actor {
+  val log = Logging(context.system, this)
+  def receive = {
+    case "test" => log.info("received test")
+    case _      => log.info("received unknown message")
+  }
+}
+```
+
+## 7 回应消息
+
+如果你需要一个用来发送回应消息的目标，可以使用`sender()`, 它是一个Actor引用. 你可以用`sender() ! replyMsg` 向这个引用发送回应消息。你也可以将这个Actor引用保存起来将来再作回应。如果没有`sender()` (不是从actor发送的消息或者没有future上下文) 那么` sender() `缺省为 ‘死信’ actor的引用。
+
+```scala
+￼￼case request =>
+   val result = process(request)
+   sender() ! result       // will have dead-letter actor as default
+```
+
+## 8 接收超时
+
+在接收消息时，如果在一段时间内没有收到第一条消息，可以使用超时机制。 要检测这种超时你必须设置 `receiveTimeout` 属性并声明一个处理`ReceiveTimeout`对象的匹配分支。
+
+```scala
+import akka.actor.ReceiveTimeout
+import scala.concurrent.duration._
+class MyActor extends Actor {
+  // To set an initial delay
+  context.setReceiveTimeout(30 milliseconds)
+  def receive = {
+    case "Hello" =>
+      // To set in a response to a message
+      context.setReceiveTimeout(100 milliseconds)
+    case ReceiveTimeout =>
+      // To turn it off
+      context.setReceiveTimeout(Duration.Undefined)
+      throw new RuntimeException("Receive timed out")
+} }
+```
+
+## 9 终止Actor
+
+通过调用`ActorRefFactory` 也就是`ActorContext` 或 `ActorSystem` 的stop方法来终止一个actor , 通常`context`用来终止子actor，而`system`用来终止顶级actor。实际的终止操作是异步执行的，也就是说stop可能在actor被终止之前返回。
+
+如果当前有正在处理的消息，对该消息的处理将在actor被终止之前完成，但是邮箱中的后续消息将不会被处理。缺省情况下这些消息会被送到 ActorSystem 的死信, 但是这取决于邮箱的实现。
+
+actor的终止分两步: 第一步actor将停止对邮箱的处理，向所有子actor发送终止命令，然后处理来自子actor的终止消息直到所有的子actor都完成终止， 最后终止自己 (调用`postStop`, 销毁邮箱, 向DeathWatch发布`Terminated`, 通知其监管者). 这个过程保证actor系统中的子树以一种有序的方式终止, 将终止命令传播到叶子结点并收集它们回送的确认消息给被终止的监管者。如果其中某个actor没有响应 (由于处理消息用了太长时间以至于没有收到终止命令), 整个过程将会被阻塞。
+
+在`ActorSystem.shutdown`被调用时, 系统根监管actor会被终止，以上的过程将保证整个系统的正确终止。
+
+`postStop` hook 是在actor被完全终止以后调用的。这是为了清理资源:
+
+```scala
+￼override def postStop() {
+  // clean up some resources ...
+}
+```
+
+*注意：由于actor的终止是异步的, 你不能马上使用你刚刚终止的子actor的名字；这会导致`InvalidActorNameException`. 你应该监视正在终止的 actor 而在最终到达的`Terminated`消息的处理中创建它的替代者。*
+
+### PoisonPill
+
+你也可以向actor发送`akka.actor.PoisonPill`消息, 这个消息处理完成后actor会被终止。`PoisonPill`与普通消息一样被放进队列，因此会在已经入队列的其它消息之后被执行。
+
+### 优雅地终止
+
+如果你想等待终止过程的结束，或者组合若干actor的终止次序，可以使用gracefulStop:
+
+```scala
+import akka.pattern.gracefulStop
+import scala.concurrent.Await
+try {
+  val stopped: Future[Boolean] = gracefulStop(actorRef, 5 seconds, Manager.Shutdown)
+  Await.result(stopped, 6 seconds)
+  // the actor has been stopped
+} catch {
+  // the actor wasn’t stopped within 5 seconds
+  case e: akka.pattern.AskTimeoutException =>
+}
+```
+
+```scala
+object Manager {
+  case object Shutdown
+}
+class Manager extends Actor {
+  import Manager._
+  val worker = context.watch(context.actorOf(Props[Cruncher], "worker"))
+  def receive = {
+    case "job" => worker ! "crunch"
+    case Shutdown =>
+      worker ! PoisonPill
+      context become shuttingDown
+}
+  def shuttingDown: Receive = {
+    case "job" => sender() ! "service unavailable, shutting down"
+    case Terminated(‘worker‘) =>
+      context stop self
+} }
+```
+
+## 10 Become/Unbecome
+
+### 升级
+
+Akka支持在运行时对Actor消息循环的实现进行实时替换: 在actor中调用`context.become`方法。Become 要求一个 `PartialFunction[Any, Unit]`参数作为新的消息处理实现。被替换的代码被存在一个栈中，可以被push和pop。
+
+*请注意actor被其监管者重启后将恢复其最初的行为。*
+
+使用 become 替换Actor的行为:
+
+```scala
+class HotSwapActor extends Actor {
+  import context._
+  def angry: Receive = {
+    case "foo" => sender() ! "I am already angry?"
+    case "bar" => become(happy)
+  }
+  def happy: Receive = {
+    case "bar" => sender() ! "I am already happy :-)"
+    case "foo" => become(angry)
+}
+  def receive = {
+    case "foo" => become(angry)
+    case "bar" => become(happy)
+} }
+```
+
+`become` 方法还有很多其它的用处，一个特别好的例子是用它来实现一个有限状态机 (FSM)。
+
+
+以下是另外一个使用 become和unbecome的例子:
+
+```scala
+case object Swap
+class Swapper extends Actor {
+  import context._
+  val log = Logging(system, this)
+  def receive = {
+    case Swap =>
+      log.info("Hi")
+      become({
+        case Swap =>
+          log.info("Ho")
+          unbecome() // resets the latest ’become’ (just for fun)
+      }, discardOld = false) // push on top instead of replace
+  }
+}
+object SwapperApp extends App {
+  val system = ActorSystem("SwapperSystem")
+  val swap = system.actorOf(Props[Swapper], name = "swapper")
+  swap ! Swap // logs Hi
+  swap ! Swap // logs Ho
+  swap ! Swap // logs Hi
+  swap ! Swap // logs Ho
+  swap ! Swap // logs Hi
+  swap ! Swap // logs Ho
+}
+```
+
+## 11 状态
+
+
+## 12 杀死actor
+
+你可以发送 Kill 来杀死actor. 这将会使用正规的监管说语义重启这个actor。
 
 
 
