@@ -16,6 +16,7 @@
     * [消息发送语义](general/message-delivery-reliability.md)
     * [配置](general/configuration.md)
 * [Actors](actors/actors.md)
+    * [Actor](actors/actors.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
