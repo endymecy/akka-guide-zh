@@ -634,7 +634,51 @@ actor丰富的生命周期hooks提供了一个有用的工具包实现多个初�
 
 ### 通过构造器初始化
 
-用构造器初始化有几个好处。第一，它使用val保存状态成为可能，这个状态在actor实例的生命期内不会改变。这使actor的实现更有鲁棒性。
+用构造器初始化有几个好处。第一，它使用val保存状态成为可能，这个状态在actor实例的生命期内不会改变。这使actor的实现更有鲁棒性。actor的每一个incarnation都会调用构造器，因此，在actor的内部组件中，总是假设正确的初始化已经发生了。这也是这种方法的缺点，因为有这样的场景，人们不希望在重启时重新初始化actor内部组件。例如，这种方法在重启时保护子actor非常有用。下面将介绍适合这种场景的模式。
+
+### 通过preStart初始化
+
+在初始化第一个actor实例时，actor的`preStart()`方法仅仅被直接调用一次，那就是创建它的`ActorRef`。在重启的情况下，`preStart()`在`postRestart()`中调用，因此，如果不重写，`preStart()`会在每一个incarnation中调用。然而，我们可以重写`postRestart()`禁用这个行为，保证只有一个调用`preStart()`。
+
+这中模式有用之处是，重启时它禁止为子actors创建新的`ActorRefs`。这可以通过重写来实现：
+
+```scala
+override def preStart(): Unit = {
+  // Initialize children here
+}
+// Overriding postRestart to disable the call to preStart()
+// after restarts
+override def postRestart(reason: Throwable): Unit = ()
+// The default implementation of preRestart() stops all the children
+// of the actor. To opt-out from stopping the children, we
+// have to override preRestart()
+override def preRestart(reason: Throwable, message: Option[Any]): Unit = {
+  // Keep the call to postStop(), but no stopping of children
+postStop() }
+```
+注意，子actors仍然重启了，但是没有创建新的`ActorRefs`。人们可以为子actor递归的才有这个准则，保证`preStart()`只在它们的refs创建时被调用一次。
+
+### 通过消息传递初始化
+
+不可能在构造器中为actor的初始化传递所有的必须的信息，例如循环依赖。在这种情况下，actor应该监听初始化消息，用`become()`或者有限状态机状态转换器去编码actor初始的或者未初始的状态。
+
+```scala
+var initializeMe: Option[String] = None
+override def receive = {
+  case "init" =>
+    initializeMe = Some("Up and running")
+    context.become(initialized, discardOld = true)
+}
+def initialized: Receive = {
+  case "U OK?" => initializeMe foreach { sender() ! _ }
+}
+```
+
+如果actor在初始化之前收到了消息，一个有用的工具`Stash`可以保存消息直到初始化完成，待初始化完成之后，重新处理它们。
+
+*注意：这种模式应该小心使用，只有在以上模式不可用是使用。一个潜在的问题是，当发送到远程actor时，消息有可能丢失。另外，在一个未初始化的状态下发布一个`ActorRefs`可能导致它在初始化之前接收一个用户消息。*
+
+
 
 
 
