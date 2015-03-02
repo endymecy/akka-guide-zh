@@ -16,8 +16,8 @@
 
 正常流程：
 
---- | ---
 步骤 | 描述
+--- | ---
 1 | `Listener`启动工作的过程。
 2 | `Worker` 通过定期向自己发送 `Do` 消息来安排工作
 3、4、5 | 接收到`Do`时`Worker`通知`CounterService`更新计数器值, 三次。`Increment`消息被转发给`Counter`, 它会更新自己的计数器变量并将当前值发给`Storage`。
@@ -29,9 +29,8 @@
 
 失败流程：
 
---- | ---
-
 步骤 | 描述
+--- | ---
 1 | `Storage` 抛出 `StorageException`异常
 2 | `CounterService` 是 `Storage` 的监管者， `StorageException`被抛出时它将 `Storage` 重启。
 3，4，5，6 | `Storage` 仍旧失败，又被重启
