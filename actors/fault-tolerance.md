@@ -360,3 +360,113 @@ import akka.actor.Actor
 
 该监管者将用来创建一个我们用来做试验的子actor:
 
+```scala
+import akka.actor.Actor
+class Child extends Actor {
+  var state = 0
+  def receive = {
+    case ex: Exception => throw ex
+    case x: Int        => state = x
+    case "get"         => sender() ! state
+  }
+}
+```
+
+这个测试可以用[测试Actor系统]()中的工具来进行简化, 比如`AkkaSpec`是`TestKit with WordSpec with MustMatchers`的混合。
+
+```scala
+import akka.testkit.{ AkkaSpec, ImplicitSender, EventFilter }
+import akka.actor.{ ActorRef, Props, Terminated }
+class FaultHandlingDocSpec extends AkkaSpec with ImplicitSender {
+  "A supervisor" must {
+    "apply the chosen strategy for its child" in {
+      // code here
+} }
+}
+```
+
+现在我们来创建 actor:
+
+```scala
+val supervisor = system.actorOf(Props[Supervisor], "supervisor")
+supervisor ! Props[Child]
+val child = expectMsgType[ActorRef] // retrieve answer from TestKit’s testActor
+```
+
+第一个测试是为了演示 Resume 指令, 我们试着将actor设为非初始状态然后让它出错:
+
+```scala
+child ! 42 // set state to 42
+child ! "get"
+expectMsg(42)
+child ! new ArithmeticException // crash it
+child ! "get"
+expectMsg(42)
+```
+
+可以看到错误处理指令完后仍能得到42的值. 现在如果我们将错误换成更严重的 NullPointerException, 情况就不同了:
+
+```scala
+￼child ! new NullPointerException // crash it harder
+ child ! "g
+ expectMsg(0)
+```
+而最后当致命的 IllegalArgumentException 发生时子actor将被其监管者终止:
+
+```scala
+￼watch(child) // have testActor watch “child”
+child ! new IllegalArgumentException // break it
+expectMsgPF() { case Terminated(‘child‘) => () }
+```
+
+到目前为止监管者完全没有被子actor的错误所影响, 因为指令集确实处理了这些错误。而对于 Exception, 就不是这么回事了， 监管者会将失败上溯传递。
+
+```scala
+supervisor ! Props[Child] // create new child
+val child2 = expectMsgType[ActorRef]
+watch(child2)
+child2 ! "get" // verify it is alive
+expectMsg(0)
+child2 ! new Exception("CRASH") // escalate failure
+expectMsgPF() {
+  case t @ Terminated(‘child2‘) if t.existenceConfirmed => ()
+}
+```
+
+监管者自己是被` ActorSystem `的顶级actor所监管的。顶级actor的缺省策略是对所有的` Exception `情况 (注意` ActorInitializationException `和 `ActorKilledException `是例外)进行重启. 由于缺省的重启指令会杀死所有的子actor，我们知道我们可怜的子actor最终无法从这个失败中幸免。
+
+如果这不是我们希望的行为 (这取决于实际用例), 我们需要使用一个不同的监管者来覆盖这个行为。
+
+```scala
+class Supervisor2 extends Actor {
+  import akka.actor.OneForOneStrategy
+  import akka.actor.SupervisorStrategy._
+  import scala.concurrent.duration._
+  override val supervisorStrategy =
+    OneForOneStrategy(maxNrOfRetries = 10, withinTimeRange = 1 minute) {
+      case _: ArithmeticException      => Resume
+      case _: NullPointerException     => Restart
+      case _: IllegalArgumentException => Stop
+      case _: Exception                => Escalate
+}
+  def receive = {
+    case p: Props => sender() ! context.actorOf(p)
+}
+  // override default to kill all children during restart
+  override def preRestart(cause: Throwable, msg: Option[Any]) {}
+}
+```
+在这个父actor之下，子actor在上溯的重启中得以幸免，如以下最后的测试:
+
+```scala
+val supervisor2 = system.actorOf(Props[Supervisor2], "supervisor2")
+supervisor2 ! Props[Child]
+val child3 = expectMsgType[ActorRef]
+child3 ! 23
+child3 ! "get"
+expectMsg(23)
+child3 ! new Exception("CRASH")
+child3 ! "get"
+expectMsg(0)
+```
+
