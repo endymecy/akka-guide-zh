@@ -533,13 +533,108 @@ object SwapperApp extends App {
 }
 ```
 
-## 11 状态
+## 11 Stash
 
+`Stash` trait可以允许一个actor临时存储消息，这些消息不能或者不应被当前的行为处理。通过改变actor的消息处理，也就是调用`context.become`或者`context.unbecome`,所有存储的消息都会`unstashed`，从而将它们预先放入邮箱中。通过这种方法，可以与接收消息时相同的顺序处理存储的消息。
+
+*注意：Stash trait继承自标记trait `RequiresMessageQueue[DequeBasedMessageQueueSemantics]`。这个trait需要系统自动的选择一个基于邮箱实现的双端队列给actor。*
+
+如下是一个例子：
+
+```scala
+import akka.actor.Stash
+class ActorWithProtocol extends Actor with Stash {
+  def receive = {
+    case "open" =>
+      unstashAll()
+      context.become({
+        case "write" => // do writing...
+        case "close" =>
+          unstashAll()
+          context.unbecome()
+        case msg => stash()
+      }, discardOld = false) // stack on top instead of replacing
+    case msg => stash()
+} }
+```
+调用`stash()`添加当前消息到actor的stash中。通常情况下，actor的消息处理默认case会调用它处理其它case无法处理的stash消息。相同的消息stash两次是不对的，它会导致一个`IllegalStateException`异常被抛出。stash也是可能有边界的，在这种情况下，调用`stash()`可能导致容量问题，抛出`StashOverflowException`异常。可以通过在邮箱的配置文件中配置`stash-capacity`选项来设置容量。
+
+调用`unstashAll()`从stash中取数据到邮箱中，直至邮箱容量（如果有）满为止。在这种情况下，有边界的邮箱会溢出，抛出`MessageQueueAppendFailedException`异常。调用`unstashAll()`后，stash可以确保为空。
+
+stash保存在`scala.collection.immutable.Vector`中。即使大数量的消息要stash，也不会存在性能问题。
 
 ## 12 杀死actor
 
-你可以发送 Kill 来杀死actor. 这将会使用正规的监管说语义重启这个actor。
+你可以发送` Kill`消息来杀死actor。这会让actor抛出一个`ActorKilledException`异常，触发一个错误。actor将会暂停它的操作，并且询问它的监控器如何处理错误。这可能意味着恢复actor、重启actor或者完全终止它。
 
+用下面的方式使用`Kill`。
+
+```scala
+￼// kill the ’victim’ actor
+ victim ! Kill
+```
+
+## 13 Actor 与异常
+
+在消息被actor处理的过程中可能会抛出异常，例如数据库异常。
+
+### 消息会怎样
+
+如果消息处理过程中（即从邮箱中取出并交给receive后）发生了异常，这个消息将被丢失。必须明白它不会被放回到邮箱中。所以如果你希望重试对消息的处理，你需要自己捕捉异常然后在异常处理流程中重试. 请确保你限制重试的次数，因为你不会希望系统产生活锁 (从而消耗大量CPU而于事无补)。
+
+### 邮箱会怎样
+
+如果消息处理过程中发生异常，邮箱没有任何变化。如果actor被重启，邮箱会被保留。邮箱中的所有消息不会丢失。
+
+### actor会怎样
+
+如果抛出了异常，actor将会被暂停，监控过程将会开始。依据监控器的决定，actor会恢复、重试或者终止。
+
+## 14 使用 PartialFunction 链来扩展actor
+
+有时，在几个actor之间共享相同的行为或者用多个更小的函数组成一个actor的行为是非常有用的。因为一个actor的receive方法返回一个`Actor.Receive`,所以这是可能实现的。`Actor.Receive`是`PartialFunction[Any,Unit]`的类型别名，偏函数可以用`PartialFunction#orElse`方法链接在一起。你可以链接任意多的函数，但是你应该记住“first match”将会赢-当这些合并的函数均可以处理同类型的消息时，这很重要。
+
+例如，假设你有一组actor，要么是`Producers`，要么是`Consumers`。有时候，一个actor拥有这两者的行为是有意义的。可以在不重复代码的情况下简单的实现该目的。那就是，抽取行为到trait中，实现actor的receive函数当作这些偏函数的合并。
+
+```scala
+trait ProducerBehavior {
+  this: Actor =>
+  val producerBehavior: Receive = {
+    case GiveMeThings =>
+      sender() ! Give("thing")
+  }
+}
+trait ConsumerBehavior {
+  this: Actor with ActorLogging =>
+  val consumerBehavior: Receive = {
+    case ref: ActorRef =>
+      ref ! GiveMeThings
+    case Give(thing) =>
+      log.info("Got a thing! It’s {}", thing)
+} }
+class Producer extends Actor with ProducerBehavior {
+  def receive = producerBehavior
+}
+class Consumer extends Actor with ActorLogging with ConsumerBehavior {
+  def receive = consumerBehavior
+}
+class ProducerConsumer extends Actor with ActorLogging
+  with ProducerBehavior with ConsumerBehavior {
+  def receive = producerBehavior orElse consumerBehavior
+}
+// protocol
+case object GiveMeThings
+case class Give(thing: Any)
+```
+## 15 初始化模式
+
+actor丰富的生命周期hooks提供了一个有用的工具包实现多个初始化模式。在`ActorRef`的生命中，一个actor可能经历多次重启，旧的实例被新的实例替换，这对外部的观察者来说是不可见的，它们只能看到`ActorRef`。
+
+人们可能会想到作为"incarnations"的新对象，一个actor的每个incarnation的初始化可能也是必须的，但是有些人可能希望当`ActorRef`创建时，初始化仅仅发生在第一个实例出生时。下面介绍几种不同的初始化模式。
+
+### 通过构造器初始化
+
+用构造器初始化有几个好处。第一，它使用val保存状态成为可能，这个状态在actor实例的生命期内不会改变。这使actor的实现更有鲁棒性。
 
 
 
