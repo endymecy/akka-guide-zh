@@ -1,8 +1,7 @@
 # actors
 
-[Actor模型](http://en.wikipedia.org/wiki/Actor_model)为编写并发和分布式系统提供了一种更高的抽象级别。它将开发人员从显式地处理锁和线程管理的工作中解脱出来，使编写并发和并行系统更加容易。Actor模型是在1973年Carl Hewitt的论文中提出的，但只是被`Erlang`语言采用后才变得流行起来，一个成功案例是爱立信使用`Erlang`非常成功地创建了高并发的可靠的电信系统。
-
-Akka Actor的API与Scala Actor类似，并且从Erlang中借用了一些语法。
+> [Actor模型](http://en.wikipedia.org/wiki/Actor_model)为编写并发和分布式系统提供了一种更高的抽象级别。它将开发人员从显式地处理锁和线程管理的工作中解脱出来，使编写并发和并行系统更加容易。Actor模型是在1973年Carl Hewitt的论文中提出的，但只是被`Erlang`语言采用后才变得流行起来，一个成功案例是爱立信使用`Erlang`非常成功地创建了高并发的可靠的电信系统。
+  Akka Actor的API与Scala Actor类似，并且从Erlang中借用了一些语法。
 
 ## 1 创建Actor
 
@@ -319,7 +318,7 @@ pipe(f) to actorD
 
 使用`ask`将会象`tell`一样发送消息给接收方, 接收方必须通过`sender ! reply`发送回应来为返回的`Future`填充数据。`ask`操作包括创建一个内部actor来处理回应，必须为这个内部actor指定一个超时期限，过了超时期限内部actor将被销毁以防止内存泄露。
 
-*注意：如果要以异常来填充future你需要发送一个 Failure 消息给发送方。这个操作不会在actor处理消息发生异常时自动完成。*
+> *注意：如果要以异常来填充future你需要发送一个 Failure 消息给发送方。这个操作不会在actor处理消息发生异常时自动完成。*
 
 ```scala
 try {
@@ -351,7 +350,7 @@ val future = myActor ? "hello"
 
 Future的`onComplete`, `onResult`, 或 `onTimeout`方法可以用来注册一个回调，以便在Future完成时得到通知。从而提供一种避免阻塞的方法。
 
-*注意：在使用future回调如`onComplete`, `onSuccess`,和`onFailure`时, 在actor内部你要小心避免捕捉该actor的引用, 也就是不要在回调中调用该actor的方法或访问其可变状态。这会破坏actor的封装，会引起同步bug和race condition, 因为回调会与此actor一同被并发调度。不幸的是目前还没有一种编译时的方法能够探测到这种非法访问。*
+> *注意：在使用future回调如`onComplete`, `onSuccess`,和`onFailure`时, 在actor内部你要小心避免捕捉该actor的引用, 也就是不要在回调中调用该actor的方法或访问其可变状态。这会破坏actor的封装，会引起同步bug和race condition, 因为回调会与此actor一同被并发调度。不幸的是目前还没有一种编译时的方法能够探测到这种非法访问。*
 
 ### 转发消息
 
@@ -480,7 +479,7 @@ class Manager extends Actor {
 
 Akka支持在运行时对Actor消息循环的实现进行实时替换: 在actor中调用`context.become`方法。Become 要求一个 `PartialFunction[Any, Unit]`参数作为新的消息处理实现。被替换的代码被存在一个栈中，可以被push和pop。
 
-*请注意actor被其监管者重启后将恢复其最初的行为。*
+> *请注意actor被其监管者重启后将恢复其最初的行为。*
 
 使用 become 替换Actor的行为:
 
@@ -676,7 +675,7 @@ def initialized: Receive = {
 
 如果actor在初始化之前收到了消息，一个有用的工具`Stash`可以保存消息直到初始化完成，待初始化完成之后，重新处理它们。
 
-*注意：这种模式应该小心使用，只有在以上模式不可用是使用。一个潜在的问题是，当发送到远程actor时，消息有可能丢失。另外，在一个未初始化的状态下发布一个`ActorRefs`可能导致它在初始化之前接收一个用户消息。*
+> *注意：这种模式应该小心使用，只有在以上模式不可用是使用。一个潜在的问题是，当发送到远程actor时，消息有可能丢失。另外，在一个未初始化的状态下发布一个`ActorRefs`可能导致它在初始化之前接收一个用户消息。*
 
 
 
