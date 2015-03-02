@@ -284,4 +284,79 @@ object CounterService {
  }
 ```
 
-## 2 
+## 2 创建一个监管策略
+
+以下更加深入地讲解错误处理的机制和可选的方法。
+
+为了演示我们假设有这样的策略:
+
+```scala
+import akka.actor.OneForOneStrategy
+import akka.actor.SupervisorStrategy._
+import scala.concurrent.duration._
+override val supervisorStrategy =
+  OneForOneStrategy(maxNrOfRetries = 10, withinTimeRange = 1 minute) {
+    case _: ArithmeticException      => Resume
+    case _: NullPointerException     => Restart
+    case _: IllegalArgumentException => Stop
+    case _: Exception                => Escalate
+}
+```
+
+我选择了一种非常著名的异常类型来演示监管和监控 中描述的错误处理方式的使用. 首先，它是一个一对一的策略，意思是每一个子actor会被单独处理（多对一的策略与之相似，唯一的差别在于任何决策都应用于监管者的所有子actor，而不仅仅是出错的那一个)。 这里我们对重启的频率作了限制，最多每分钟能进行 10 次重启; 所有这样的设置都可以被忽略，也就是说，相应的限制并不被采用, 使设置重启频率的绝对上限值或让重启无限进行成为可能。
+
+构成主体的 match 语句的类型是`Decider`, 它是一个`PartialFunction[Throwable, Directive]`。这一部分将子actor的失败类型映射到相应的指令上。
+
+> *注意：如果策略定义在监控actor的内部（相反的是在一个组合对象的内部），它的`Decider`可以线程安全的访问actor的所有内部状态，包括获取当前失败子actor的一个引用*
+
+### 缺省的监管机制
+
+如果定义的监管机制没有覆盖抛出的异常，将使用`上溯(Escalate)`机制。
+
+如果某个actor没有定义监管机制，下列异常将被缺省地处理:
+
+- `ActorInitializationException`将终止出错的子actor
+- `ActorKilledException` 将终止出错的子 actor
+- `Exception` 将重启出错的子 actor
+- 其它的`Throwable `将被上溯传给父actor
+
+如果异常一直被上溯到根监管者，在那儿也会用上述缺省方式进行处理。
+
+你可以合并你自己的策略到默认策略中去。
+
+```scala
+import akka.actor.OneForOneStrategy
+import akka.actor.SupervisorStrategy._
+import scala.concurrent.duration._
+override val supervisorStrategy =
+  OneForOneStrategy(maxNrOfRetries = 10, withinTimeRange = 1 minute) {
+    case _: ArithmeticException => Resume
+    case t =>
+      super.supervisorStrategy.decider.applyOrElse(t, (_: Any) => Escalate)
+  }
+```
+
+## 3 测试应用程序
+
+以下部分展示了实际中不同的指令的效果，为此我们需要创建一个测试环境。首先我们需要一个合适的监管者:
+
+```scala
+import akka.actor.Actor
+  class Supervisor extends Actor {
+    import akka.actor.OneForOneStrategy
+    import akka.actor.SupervisorStrategy._
+    import scala.concurrent.duration._
+    override val supervisorStrategy =
+      OneForOneStrategy(maxNrOfRetries = 10, withinTimeRange = 1 minute) {
+        case _: ArithmeticException      => Resume
+        case _: NullPointerException     => Restart
+        case _: IllegalArgumentException => Stop
+        case _: Exception                => Escalate
+}
+    def receive = {
+      case p: Props => sender() ! context.actorOf(p)
+} }
+```
+
+该监管者将用来创建一个我们用来做试验的子actor:
+
