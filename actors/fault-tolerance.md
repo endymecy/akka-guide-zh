@@ -1,6 +1,6 @@
 # 容错
 
-如[Actor系统](../general/actor-systems.md) 中所述，每一个actor是其子actor的监管者 , 而且每一个actor会定义一个处理错误的监管策略。这个策略制定以后不能修改，因为它集成为actor系统结构的一部分。
+> 如[Actor系统](../general/actor-systems.md) 中所述，每一个actor是其子actor的监管者 , 而且每一个actor会定义一个处理错误的监管策略。这个策略制定以后不能修改，因为它集成为actor系统结构的一部分。
 
 ## 1 实际中的错误处理
 
