@@ -19,6 +19,7 @@
     * [Actor](actors/actors.md)
     * [有类型Actor](actors/typed-actor.md)
     * [容错](actors/fault-tolerance.md)
+    * [派发器](actors/dispatchers.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
