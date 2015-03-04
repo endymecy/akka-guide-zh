@@ -208,3 +208,338 @@ akka.actor.deployment {
 ```scala
 system.actorOf(Props[Parent], "parent")
 ```
+
+### RoundRobinPool和RoundRobinGroup
+
+以轮询的方式路由到routee
+
+在配置文件中定义的`RoundRobinPool`
+
+```scala
+akka.actor.deployment {
+  /parent/router1 {
+    router = round-robin-pool
+    nr-of-instances = 5
+  }
+}
+```
+
+```scala
+￼val router1: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router1")
+```
+
+在代码中定义的`RoundRobinPool`
+
+```scala
+￼val router2: ActorRef =
+  context.actorOf(RoundRobinPool(5).props(Props[Worker]), "router2")
+```
+
+在配置文件中定义的`RoundRobinGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router3 {
+    router = round-robin-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+  }
+}
+```
+
+```scala
+￼val router3: ActorRef =
+  context.actorOf(FromConfig.props(), "router3")
+```
+
+在代码中定义的`RoundRobinGroup`
+
+```scala
+￼val paths = List("/user/workers/w1", "/user/workers/w2", "/user/workers/w3")
+ val router4: ActorRef =
+  context.actorOf(RoundRobinGroup(paths).props(), "router4")
+```
+
+### RandomPool和RandomGroup
+
+这个路由器类型为每个消息随机选择一个routee
+
+在配置文件中定义的`RandomGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router5 {
+    router = random-pool
+    nr-of-instances = 5
+  }
+}
+```
+
+```scala
+￼val router5: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router5")
+```
+在代码中定义的`RandomGroup`
+
+```scala
+￼val router6: ActorRef =
+  context.actorOf(RandomPool(5).props(Props[Worker]), "router6")
+```
+
+在配置文件中定义的`RandomGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router7 {
+    router = random-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+  }
+}
+```
+
+```scala
+val router7: ActorRef =
+  context.actorOf(FromConfig.props(), "router7")
+```
+
+在代码中定义的`RandomGroup`
+
+```scala
+￼val paths = List("/user/workers/w1", "/user/workers/w2", "/user/workers/w3")
+ val router8: ActorRef =
+  context.actorOf(RandomGroup(paths).props(), "router8")
+```
+
+### BalancingPool
+
+这个路由器重新分配工作，从繁忙的routees到空闲的routees。所有的routees共享相同的邮箱
+
+在配置文件中定义的`BalancingPool`
+
+```scala
+akka.actor.deployment {
+  /parent/router9 {
+    router = balancing-pool
+    nr-of-instances = 5
+  }
+}
+```
+
+```scala
+￼val router9: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router9")
+```
+
+在代码中定义的`BalancingPool`
+
+```scala
+￼val router10: ActorRef =
+  context.actorOf(BalancingPool(5).props(Props[Worker]), "router10")
+```
+平衡派发器有额外的配置，这可以被Pool使用，在路由器部署配置的`pool-dispatcher`片段中配置。
+
+```scala
+akka.actor.deployment {
+  /parent/router9b {
+    router = balancing-pool
+    nr-of-instances = 5
+    pool-dispatcher {
+      attempt-teamwork = off
+    }
+} }
+```
+
+###  SmallestMailboxPool
+
+这个路由器选择未挂起的邮箱中消息数最少的routee。选择顺序如下所示：
+
+- 选取任何一个空闲的（没有正在处理的消息）邮箱为空的 routee
+- 选择任何邮箱为空的routee
+- 选择邮箱中等待的消息最少的 routee
+- 选择任何一个远程 routee, 由于邮箱大小未知，远程actor被认为具有低优先级
+
+定义在配置文件中的`SmallestMailboxPool`
+
+```scala
+akka.actor.deployment {
+  /parent/router11 {
+    router = smallest-mailbox-pool
+    nr-of-instances = 5
+  }
+}
+```
+
+```scala
+￼val router11: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router11")
+```
+在代码中定义的`SmallestMailboxPool`
+
+```scala
+￼val router12: ActorRef =
+  context.actorOf(SmallestMailboxPool(5).props(Props[Worker]), "router12")
+```
+
+### BroadcastPool和BroadcastGroup
+
+一个广播路由器转发消息到所有的routees
+
+定义在配置文件中的`BroadcastPool`
+
+```scala
+akka.actor.deployment {
+  /parent/router13 {
+    router = broadcast-pool
+    nr-of-instances = 5
+  }
+}
+```
+
+```scala
+￼val router13: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router13")
+```
+
+定义在代码中的`BroadcastPool`
+
+```scala
+￼val router14: ActorRef =
+  context.actorOf(BroadcastPool(5).props(Props[Worker]), "router14")
+```
+
+定义在配置文件中的`BroadcastGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router15 {
+    router = broadcast-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+  }
+}
+```
+
+```scala
+￼val router15: ActorRef =
+  context.actorOf(FromConfig.props(), "router15")
+```
+
+定义在代码中的`BroadcastGroup`
+
+```scala
+￼val paths = List("/user/workers/w1", "/user/workers/w2", "/user/workers/w3")
+ val router16: ActorRef =
+  context.actorOf(BroadcastGroup(paths).props(), "router16")
+```
+### ScatterGatherFirstCompletedPool和ScatterGatherFirstCompletedGroup
+
+ScatterGatherFirstCompletedRouter发送消息到它的每个routees，然后等待返回的第一个回复。这个结果将会返回原始发送者（original sender）。其它回复丢弃。
+
+它期待至少一个带有配置时间的回复。否则它将回复一个带有`akka.pattern.AskTimeoutException`的`akka.actor.Status.Failure`。
+
+在配置文件中定义的`ScatterGatherFirstCompletedPool`
+
+```scala
+akka.actor.deployment {
+  /parent/router17 {
+    router = scatter-gather-pool
+    nr-of-instances = 5
+    within = 10 seconds
+} }
+```
+
+```scala
+val router17: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router17")
+```
+
+在代码中定义的`ScatterGatherFirstCompletedPool`
+
+```scala
+￼val router18: ActorRef =
+  context.actorOf(ScatterGatherFirstCompletedPool(5, within = 10.seconds).
+    props(Props[Worker]), "router18")
+```
+
+在配置文件中定义的`ScatterGatherFirstCompletedGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router19 {
+    router = scatter-gather-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+    within = 10 seconds
+} }
+```
+
+```scala
+￼val router19: ActorRef =
+  context.actorOf(FromConfig.props(), "router19")
+```
+
+在代码中定义的`ScatterGatherFirstCompletedGroup`
+
+```scala
+val paths = List("/user/workers/w1", "/user/workers/w2", "/user/workers/w3")
+val router20: ActorRef =
+  context.actorOf(ScatterGatherFirstCompletedGroup(paths,
+    within = 10.seconds).props(), "router20")
+```
+
+### TailChoppingPool和TailChoppingGroup
+
+TailChoppingPool首先发送一个消息给一个随机选择的routee，然后等待一段时间，发送第二个消息给一个随机选择的routee，依此类推。它等待返回的第一个回复，然后讲回复发送给原始发送者。其它回复丢弃。
+
+这个路由器的目标是减少通过到多个routees的路由冗余查询而产生的性能延迟，假定其它actors中的某一个比初始化的那个反应速度快。
+
+在配置文件中定义的`TailChoppingPool`
+
+```scala
+￼akka.actor.deployment {
+  /parent/router21 {
+    router = tail-chopping-pool
+        nr-of-instances = 5
+        within = 10 seconds
+        tail-chopping-router.interval = 20 milliseconds
+    } }
+```
+
+```scala
+￼val router21: ActorRef =
+  context.actorOf(FromConfig.props(Props[Worker]), "router21")
+```
+
+在代码中定义的`TailChoppingPool`
+
+```scala
+￼val router22: ActorRef =
+  context.actorOf(TailChoppingPool(5, within = 10.seconds, interval = 20.millis).
+    props(Props[Worker]), "router22")
+```
+
+在配置文件中定义的`TailChoppingGroup`
+
+```scala
+akka.actor.deployment {
+  /parent/router23 {
+    router = tail-chopping-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+    within = 10 seconds
+    tail-chopping-router.interval = 20 milliseconds
+} }
+```
+```scala
+￼val router23: ActorRef =
+  context.actorOf(FromConfig.props(), "router23")
+```
+
+在代码中定义的`TailChoppingGroup`
+
+```scala
+val paths = List("/user/workers/w1", "/user/workers/w2", "/user/workers/w3")
+val router24: ActorRef =
+  context.actorOf(TailChoppingGroup(paths,
+    within = 10.seconds, interval = 20.millis).props(), "router24")
+```
+
+### ConsistentHashingPool 和 ConsistentHashingGroup
+
