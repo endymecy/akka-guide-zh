@@ -145,4 +145,66 @@ This means that if you have not specified supervisorStrategy of the router or it
 
 > *注：一个Pool路由器的子actors终止，Pool路由器不会自动创建一个新的子actor。如果一个Pool路由器的所有子actors终止，路由器自己也会终止，除非它是一个动态路由器，如使用一个resizer*
 
+## Group
 
+有时，与其用路由器actor创建它的routees，分开创建routees并把它们提供给路由器使用更令人满意。你可以通过传递一个routees的路径到路由器的配置做到这一点。消息将会利用`ActorSelection`发送到这些路径。
+
+下面的例子显示了通过提供给路由器三个routee actors的路径字符串来创建这个路由器。
+
+```scala
+akka.actor.deployment {
+  /parent/router3 {
+    router = round-robin-group
+    routees.paths = ["/user/workers/w1", "/user/workers/w2", "/user/workers/w3"]
+  }
+}
+```
+
+```scala
+￼val router3: ActorRef =
+  context.actorOf(FromConfig.props(), "router3")
+```
+
+下面是相同的例子，只是路由器的配置通过编程设置而不是配置文件。
+
+```scala
+￼val router4: ActorRef =
+  context.actorOf(RoundRobinGroup(paths).props(), "router4")
+```
+
+routee actors在路由器外部创建：
+
+```scala
+system.actorOf(Props[Workers], "workers")
+```
+
+```scala
+class Workers extends Actor {
+  context.actorOf(Props[Worker], name = "w1")
+  context.actorOf(Props[Worker], name = "w2")
+  context.actorOf(Props[Worker], name = "w3")
+  // ...
+```
+
+路径可能包括为运行在远程机器上的actors提供的协议和地址信息。Remoting需要将`akka-remote`模块包含在类路径下
+
+```scala
+akka.actor.deployment {
+  /parent/remoteGroup {
+    router = round-robin-group
+    routees.paths = [
+      "akka.tcp://app@10.0.0.1:2552/user/workers/w1",
+      "akka.tcp://app@10.0.0.2:2552/user/workers/w1",
+      "akka.tcp://app@10.0.0.3:2552/user/workers/w1"]
+} }
+```
+
+## 3 路由器的使用
+
+这一章，我们将介绍怎样创建不同类型的路由器actor。
+
+这一章的路由器actors通过一个名叫`parent`的顶级actor创建。注意在配置中，部署路径以`/parent/`开头，后跟着路由器actor的名字。
+
+```scala
+system.actorOf(Props[Parent], "parent")
+```
