@@ -22,6 +22,7 @@
     * [派发器](actors/dispatchers.md)
     * [邮箱](actors/mailbox.md)
     * [路由](actors/routing.md)
+    * [有限状态机](actors/fsm.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
