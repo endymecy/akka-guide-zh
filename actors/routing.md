@@ -892,6 +892,9 @@ akka.actor.deployment {
   }
 }
 ```
+这是为一个Pool提供派发器唯一需要做的事情。
+
+> *如果你使用一个actor的group路由到它的路径，它将会一直使用在Props中配置的相同的派发器，在actor创建之后，不能修改actor的派发器*
 
 “head”路由actor, 不能运行在同样的派发器上, 因为它并不处理相同的消息，这个特殊的actor并不使用 Props中配置的派发器, 而是使用从`RouterConfig` 来的 `routerDispatcher` , 它缺省为actor系统的缺省派发器. 所有的标准路由actor都允许在其构造方法或工厂方法中设置这个属性，自定义路由必须以合适的方式自己实现这个方法。
 
@@ -902,3 +905,5 @@ val router: ActorRef = system.actorOf(
   RandomPool(5, routerDispatcher = "router-dispatcher").props(Props[Worker]),
   name = "poolWithDispatcher")
 ```
+
+> *注：不允许为一个`akka.dispatch.BalancingDispatcherConfigurator`配置`routerDispatcher`，因为特殊路由器的消息不能被其它的消息处理*
