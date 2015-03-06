@@ -23,6 +23,7 @@
     * [邮箱](actors/mailbox.md)
     * [路由](actors/routing.md)
     * [有限状态机](actors/fsm.md)
+    * [测试actor系统](actors/testing-actor-systems.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
