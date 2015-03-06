@@ -135,8 +135,8 @@ object TestKitUsageSpec {
 
 Akka 有一个专门的` akka-testkit `模块来支持不同层次上的测试, 很明显共有两个类别:
 
-- 测试独立的不包括actor模型的代码，即没有多线程的内容；在事件发生的次序方面有完全确定性的行为，没有任何并发考虑， 这在下文中称为`单元测试（Unit Testing`
-- 测试（多个）包装过的actor，包括多线程调度; 事件的次序没有确定性但由于使用了actor模型，不需要考虑并发，这在下文中被称为`集成测试（Integration Testing`
+- 测试独立的不包括actor模型的代码，即没有多线程的内容；在事件发生的次序方面有完全确定性的行为，没有任何并发考虑， 这在下文中称为`单元测试（Unit Testing）。`
+- 测试（多个）包装过的actor，包括多线程调度; 事件的次序没有确定性但由于使用了actor模型，不需要考虑并发，这在下文中被称为`集成测试（Integration Testing）。`
 
 当然这两个类型有着不同的粒度, 单元测试通常是白盒测试而集成测试是对完整的actor网络进行的功能测试。 其中重要的区别是并发的考虑是否是测试是一部分。我们提供的工具将在下面的章节中详细介绍。
 
@@ -300,3 +300,243 @@ TestKit 中有一个名为` testActor `的actor作为将要被不同的 `expectM
 - `expectMsgAnyClassOf[T](d: Duration, obj: Class[_ <: T]*): T`
 
 在指定的时间内必须收到一个对象，它必须至少是指定的某` Class `对象的实例; 返回收到的对象。
+
+- `expectMsgAllOf[T](d: Duration, obj: T*): Seq[T]`
+
+在指定时间内必须收到与指定的数组中相等数量的对象, 对每个收到的对象，必须至少有一个数组中的对象与它相等(用==进行比较)。 返回收到的整个对象集合。
+
+- `expectMsgAllClassOf[T](d: Duration, c: Class[_ <: T]*): Seq[T]`
+
+在指定时间内必须收到与指定的` Class `数组中相等数量的对象，对数组中的每一个`Class`， 必须至少有一个对象的Class与它相等(用 ==进行比较) (这不是子类兼容的类型检查)。 返回收到的整个对象集合。
+
+- `expectMsgAllConformingOf[T](d: Duration, c: Class[_ <: T]*): Seq[T]`
+
+在指定时间内必须收到与指定的 Class 数组中相等数量的对象，对数组中的每个Class 必须至少有一个对象是这个Class的实例。返回收到的整个对象集合。
+
+- `expectNoMsg(d: Duration)`
+
+在指定时间内不能收到消息。如果在这个方法被调用之前已经收到了消息，并且没有用其它的方法将这些消息从队列中删除，这个断言也会失败。
+
+- `receiveN(n: Int, d: Duration): Seq[AnyRef]`
+
+指定的时间内必须收到n 条消息; 返回收到的消息。
+
+- `fishForMessage(max: Duration, hint: String)(pf: PartialFunction[Any, Boolean]): Any`
+
+只要时间没有用完，并且偏函数匹配消息并返回false就一直接收消息. 返回使偏函数返回true 的消息或抛出异常, 异常中会提供一些提示以供debug使用。
+
+除了接收消息的断言，还有一些方法来对消息流提供帮助:
+
+- `receiveOne(d: Duration): AnyRef`
+
+尝试等待给定的时间以等待收到一个消息，如果失败则返回null 。 如果给定的 Duration 是0，这一调用是非阻塞的(轮询模式)。
+
+- `receiveWhile[T](max: Duration, idle: Duration, messages: Int)(pf: PartialFunction[Any, T]): Seq[T]`
+
+只要满足
+
+    - 消息与偏函数匹配
+    - 指定的时间还没用完
+    - 在空闲的时间内收到了下一条消息
+    - 消息数量还没有到上限
+    
+就收集消息并返回收集到的所有消息。 时间上限缺省值是最深层的within块中剩余的时间，空闲时间缺省为无限 (也就是禁止空闲超时功能)。 期望的消息数量缺省值为` Int.MaxValue`, 也就是不作这个限制。
+
+- `awaitCond(p: => Boolean, max: Duration, interval: Duration)`
+
+每经过` interval `时间就检查一下给定的条件，直到它返回` true `或者` max `时间用完了. 时间间隔缺省为100 ms而最大值缺省为最深层的within块中的剩余时间。
+
+- `ignoreMsg(pf: PartialFunction[AnyRef, Boolean])`  `ignoreNoMsg`
+
+内部的` testActor` 包含一个偏函数用来忽略消息: 它只会将与偏函数不匹配或使函数返回false的消息放进队列。 这个函数可以用上面的方法进行设置和重设; 每一次调用都会覆盖之前的函数，而不会迭加。
+
+这个功能在你想到忽略正常的消息而只对你指定的一些消息感兴趣时（如测试日志系统时）比较有用。
+
+### 预料的异常
+
+由于集成测试无法进入参与测试的actor的内部处理流程, 无法直接确认预料中的异常。为了做这件事，只能使用日志系统：将普通的事件处理器替换成` TestEventListener `然后使用` EventFilter `可以对日志信息，包括由于异常产生的日志，做断言:
+
+```scala
+import akka.testkit.EventFilter
+import com.typesafe.config.ConfigFactory
+implicit val system = ActorSystem("testsystem", ConfigFactory.parseString("""
+  akka.loggers = ["akka.testkit.TestEventListener"]
+  """))
+try {
+  val actor = system.actorOf(Props.empty)
+  EventFilter[ActorKilledException](occurrences = 1) intercept {
+actor ! Kill }
+} finally {
+  shutdown(system)
+}
+```
+
+如果`occurrences`指定了大小，那么`intercept`将会阻塞直到接收到匹配数量的消息或者超过`akka.test.filter-leeway`中配置的时间。超时时，测试将会失败。
+
+### 对定时进行断言
+
+功能测试的另一个重要部分与定时器有关：有些事件不能立即发生（如定时器）, 另外一些需要在时间期限内发生。 因此所有的进行检查的方法都接受一个时间上限，不论是正面还是负面的结果都应该在这个时间之前获得。时间下限需要在这个检测方法之外进行检查，我们有一个新的工具来管理时间期限:
+
+```scala
+within([min, ]max) {
+  ...
+}
+```
+
+`within`所带的代码块必须在一个介于` min `和` max`之间的`Duration`之前完成, 其中min缺省值为0。将`max `参数与块的启动时间相加得到的时间期限在所有检查方法块内部都可以隐式得获得，如果你没有指定max值，它会从最深层的` within `块继承这个值。
+
+应注意如果代码块的最后一条接收消息断言是` expectNoMsg `或 `receiveWhile`, 对` within `的最终检查将被跳过，以避免由于唤醒延迟导致的假正值（false positives）。这意味着虽然其中每一个独立的断言仍然使用时间上限，整个代码块在这种情况下会有长度随机的延迟。
+
+```scala
+import akka.actor.Props
+import akka.util.duration._
+ 
+val worker = system.actorOf(Props[Worker])
+within(200 millis) {
+  worker ! "some work"
+  expectMsg("some result")
+  expectNoMsg // 在剩下的200ms中会阻塞
+  Thread.sleep(300) // 不会使当前代码块失败
+}
+```
+
+> *所有的时间都以 System.nanoTime为单位, 它们描述的是墙上时间，而非CPU时间。*
+
+Ray Roestenburg 写了一篇关于使用 TestKit 的好文:[ http://roestenburg.agilesquad.com/2011/02/unit-testing-akka-actors-with-testkit_12.html](http://roestenburg.agilesquad.com/2011/02/unit-testing-akka-actors-with-testkit_12.html). 完整的示例也可以在第一章找到。
+
+#### 考虑很慢的测试系统
+
+你在跑得飞快的笔记本上使用的超时设置在高负载的Jenkins（或类似的）服务器上通常都会导致错误的测试失败。为了考虑这种情况，所有的时间上限都在内部乘以一个系数，这个系数来自配置文件中的` akka.test.timefactor`, 缺省值为 1。
+
+你也可以用`akka.testkit`包对象中的隐式转换来将同样的系数来作用于其它的时限，为Duration添加dilated函数。
+
+```scala
+import scala.concurrent.duration._
+import akka.testkit._
+10.milliseconds.dilated
+```
+
+### 用隐式的ActorRef解决冲突
+
+如果你希望在基于TestKit的测试的消息发送者为` testActor`， 只需要为你的测试代码混入` ImplicitSender`。
+
+```scala
+￼class MySpec(_system: ActorSystem) extends TestKit(_system) with ImplicitSender
+  with WordSpecLike with Matchers with BeforeAndAfterAll {
+```
+
+### 使用多个探针 Actors
+
+如果待测的actor会发送多个消息到不同的目标，在使用TestKit时可能会难以分辨到达` testActor`的消息流。 另一种方法是用它来创建简单的探针actor，将它们插入到消息流中。 为了让这种方法更加强大和方便，我们提供了一个具体实现，称为` TestProbe`。 它的功能可以用下面的小例子说明:
+
+```scala
+import scala.concurrent.duration._
+import akka.actor._
+import scala.concurrent.Future
+class MyDoubleEcho extends Actor {
+  var dest1: ActorRef = _
+  var dest2: ActorRef = _
+  def receive = {
+    case (d1: ActorRef, d2: ActorRef) =>
+      dest1 = d1
+      dest2 = d2
+    case x =>
+      dest1 ! x
+      dest2 ! x
+} }
+
+val probe1 = TestProbe()
+val probe2 = TestProbe()
+val actor = system.actorOf(Props[MyDoubleEcho])
+actor ! ((probe1.ref, probe2.ref))
+actor ! "hello"
+probe1.expectMsg(500 millis, "hello")
+probe2.expectMsg(500 millis, "hello")
+```
+
+这里我们用` MyDoubleEcho`来仿真一个待测系统, 它会将输入镜像为两个输出。关联两个测试探针来进行（最简单）行为的确认。 还有一个例子是两个actor A，B， A 发送消息给 B。 为了确认这个消息流，可以插入` TestProbe `作为A的目标, 使用转发功能或下文中的自动导向功能在测试上下文中包含真实的B.
+
+还可以为探针配备自定义的断言来使测试代码更简洁清晰:
+
+```scala
+case class Update(id: Int, value: String)
+val probe = new TestProbe(system) {
+  def expectUpdate(x: Int) = {
+    expectMsgPF() {
+      case Update(id, _) if id == x => true
+    }
+    sender() ! "ACK"
+  }
+}
+```
+
+这里你拥有完全的灵活性，可以将TestKit 提供的工具与你自己的检测代码混合和匹配，并为它取一个有意义的名字。在实际中你的代码可能比上面的示例要复杂；要充分利用工具！
+
+#### 对探针收到的消息进行应答
+
+探针在可能的条件下，会记录通讯通道以便进行应答:
+
+```scala
+val probe = TestProbe()
+val future = probe.ref ? "hello"
+probe.expectMsg(0 millis, "hello") // TestActor runs on CallingThreadDispatcher
+probe.reply("world")
+assert(future.isCompleted && future.value == Some(Success("world")))
+```
+
+#### 对探针收到的消息进行转发
+
+假定一个象征性的actor网络中某目标 actor `dest` 从 actor `source`收到一条消息。 如果你使消息先发往` TestProbe probe `, 你可以在保持网络功能的同时对消息流的容量和时限进行断言:
+
+```scala
+class Source(target: ActorRef) extends Actor {
+  def receive = {
+    case "start" => target ! "work"
+  }
+}
+class Destination extends Actor {
+  def receive = {
+    case x => // Do something..
+  }
+}
+val probe = TestProbe()
+val source = system.actorOf(Props(classOf[Source], probe.ref))
+val dest = system.actorOf(Props[Destination])
+source ! "start"
+probe.expectMsg("work")
+probe.forward(dest)
+```
+
+`dest` actor 将收到同样的消息，就象没有插入探针一样。
+
+#### 自动导向
+
+将收到的消息放进队列以便以后处理，这种方法不错，但要保持测试运行并对其运行过程进行跟踪，你也可以为参与测试的探针(事实上是任何 TestKit)安装一个` AutoPilot（自动导向）`。 自动导向在消息进入检查队列之前启动。 以下代码可以用来转发消息, 例如` A --> Probe --> B`, 只要满足一定的协约。
+
+```scala
+val probe = TestProbe()
+probe.setAutoPilot(new TestActor.AutoPilot {
+  def run(sender: ActorRef, msg: Any): TestActor.AutoPilot =
+    msg match {
+        case "stop" => TestActor.NoAutoPilot
+        case x => testActor.tell(x, sender); TestActor.KeepRunning }
+})
+```
+
+run 方法必须返回包含在`Option`中的`auto-pilot`供下一条消息使用, 设置成` None `表示终止自动导向。
+
+#### 小心定时器断言
+
+在使用测试探针时，`within` 块的行为可能会不那么直观：你需要记住上文所描述的期限仅对每一个探针的局部作用域有效。因此，探针 不会响应别的探针的期限，也不响应包含它的`TestKit`实例的期限:
+
+```scala
+val probe = TestProbe()
+within(1 second) {
+  probe.expectMsg("hello")
+}
+```
+
+这里，`expectMsg`调用将会使用缺省的timeout。
+
+
+
