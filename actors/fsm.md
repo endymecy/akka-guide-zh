@@ -273,3 +273,122 @@ def handler(from: StateType, to: StateType) {
 用这个方法注册的处理器是迭加的, 这样你可以将 onTransition 块和 when 块分散定义以适应设计的需要. 但必须注意的是，每一次状态转换都会调用所有的处理器, 而不是最先匹配的那个。 这是一个故意的设计，使得你可以将某一部分状态转换处理放在某一个地方而不用担心先前的定义会屏蔽后面的；当然这些操作还是按定义的顺序执行的。
 
 > *注意：这种内部监控可以用于通过状态转换来构建你的FSM，这样在添加新的目标状态时不会忘记。例如在离开某个状态时取消定时器这种操作。*
+
+#### 外部监控
+
+可以用`SubscribeTransitionCallBack(actorRef)`注册一个外部actor来接收状态转换的通知消息。 这个具名actor将立即收到` CurrentState(self, stateName) `消息 并在之后每次进入新状态时收到` Transition(actorRef, oldState, newState) `消息。FSM actor发送`UnsubscribeTransitionCallBack(actorRef)` 来注销外部监控actor。
+
+注册一个未运行的监听actor将生成一个警告，并优雅地失败。停止一个未注销的监听actor将在下一次状态转换时从注册列表中将该监听actor删除。
+
+### 转换状态
+
+作为`when()`块参数的偏函数可以使用Scala的函数式编程工具来转换。为了保持类型推断，应用于一些通用处理逻辑的一个帮助函数可以应用到不同的子句中。
+
+```scala
+when(SomeState)(transform {
+  case Event(bytes: ByteString, read) => stay using (read + bytes.length)
+} using {
+  case s @ FSM.State(state, read, timeout, stopReason, replies) if read > 1000 =>
+    goto(Processing)
+})
+```
+
+不言而喻，这个方法的参数可以保存并应用多次。也就是说应用相同的转换到不同的when()块中
+
+```scala
+val processingTrigger: PartialFunction[State, State] = {
+  case s @ FSM.State(state, read, timeout, stopReason, replies) if read > 1000 =>
+    goto(Processing)
+}
+when(SomeState)(transform {
+  case Event(bytes: ByteString, read) => stay using (read + bytes.length)
+} using processingTrigger)
+```
+
+### 定时器
+
+除了状态超时，FSM还管理以String名称为标识的定时器。 你可以用`setTimer(name, msg, interval, repeat)`设置定时器其中msg 是经过interval时间以后发送的消息。 如果 `repeat` 设成 true, 定时器将以`interval`指定的时间段重复规划。
+
+用`cancelTimer(name)`来取消定时器，取消操作确保立即执行，这意味着在这个调用之后定时器已经规划的消息将不会执行。任何定时器的状态可以用`isTimerActive(name)`进行查询。这些具名定时器是对状态超时的补充，因为它们不受中间收到的其它消息的影响。
+
+
+### 从内部终止
+
+将结果状态设置为`stop([reason[, data]])`将终止FSM。
+
+其中的reason必须是 `Normal` (缺省), `Shutdown` 或 `Failure(reason)` 之一, 可以提供第二个参数来改变状态数据，在终止处理器中可以使用该数据。
+
+> *必须注意`stop`并不会停止当前的操作，立即停止FSM。 stop操作必须像状态转换一样从事件处理器中返回 (但要注意 return 语句不能用在 when 块中)。*
+
+```scala
+when(Error) {
+  case Event("stop", _) =>
+    // do cleanup ...
+stop() }
+```
+
+你可以用` onTermination(handler) `来指定当FSM停止时要运行的代码。 其中的` handler `是一个以`StopEvent(reason, stateName, stateData)` 为参数的偏函数
+
+```scala
+onTermination {
+  case StopEvent(FSM.Normal, state, data)         => // ...
+  case StopEvent(FSM.Shutdown, state, data)       => // ...
+  case StopEvent(FSM.Failure(cause), state, data) => // ...
+}
+```
+
+对于使用` whenUnhandled `的场合, 这个处理器不会迭加, 所以每次调用` onTermination `都会替换先前安装的处理器。
+
+### 从外部终止
+
+当FSM关联的` ActorRef `被` stop `方法停止后, 它的` postStop hook `将被执行。在`FSM trait`中的缺省实现是执行` onTermination `处理器（如果有的话）来处理 `StopEvent(Shutdown, ...)`事件。
+
+> *注意：如果你重写`postStop `并希望你的` onTermination `处理器被调用, 别忘了调用` super.postStop`。*
+
+## 4 测试和调试有限状态机
+
+### 事件跟踪
+
+配置文件中的` akka.actor.debug.fsm `打开用` LoggingFSM `实例完成的事件跟踪日志:
+
+```scala
+import akka.actor.LoggingFSM
+class MyFSM extends LoggingFSM[StateType, Data] {
+  // body elided ...
+}
+```
+
+这个FSM 将以DEBUG 级别记录日志:
+
+- 所有处理完的事件, 包括 StateTimeout 和计划的定时器消息
+- 所有具名定时器的设置和取消
+- 所有的状态转换
+
+生命周期变化及特殊消息可以如Actor中所述进行日志记录。
+
+### 滚动的事件日志
+
+`LoggingFSM` trait 为FSM 添加了一个新的功能: 一个滚动的事件日志，它可以用于` debugging `(跟踪为什么 FSM 会进入某个失败的状态）) 或其它的什么新用法:
+
+```scala
+import akka.actor.LoggingFSM
+class MyFSM extends LoggingFSM[StateType, Data] {
+  override def logDepth = 12
+  onTermination {
+    case StopEvent(FSM.Failure(_), state, data) =>
+      val lastEvents = getLog.mkString("\n\t")
+      log.warning("Failure in state " + state + " with data " + data + "\n" +
+        "Events leading up to this point:\n\t" + lastEvents)
+  // ...
+} }
+```
+
+logDepth 缺省值为0, 意思是关闭事件日志。
+
+> *注意：日志缓冲区是在actor创建时分配的，这也是为什么logDepth的配置使用了虚方法调用。如果你想用 val对其进行覆盖, 必须保证它的初始化在` LoggingFSM `的初始化之前完成, 而且在缓冲区分配完成后不要修改` logDepth `返回的值。*
+
+事件日志的内容可以用` getLog `方法获取, 它返回一个` IndexedSeq[LogEntry] `，其中最新的条目在位置0。
+
+## 5 例子
+
+可以在[这里](http://www.typesafe.com/activator/template/akka-sample-fsm-scala)找到一个与`Actor become/unbecome `方式进行了对比的大一些的FSM示例
