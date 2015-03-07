@@ -539,4 +539,121 @@ within(1 second) {
 这里，`expectMsg`调用将会使用缺省的timeout。
 
 
+### 测试父子关系
+
+一个actor的父actor创建该actor。这造成了两者直接的耦合，使其不可以直接测试。明显地，有三种方法可以提高父子关系的可测性。
+
+- 当创建一个子actor时，传递一个直接的引用到它的父actor。
+- 当创建一个父actor时，告诉父actor如何创建它的子actor。
+- 当测试时，创建一个虚构(fabricated)的父actor。
+
+例如，你想测试的代码结构如下所示：
+
+```scala
+class Parent extends Actor {
+  val child = context.actorOf(Props[Child], "child")
+  var ponged = false
+  def receive = {
+    case "pingit" => child ! "ping"
+    case "pong"   => ponged = true
+} }
+class Child extends Actor {
+  def receive = {
+    case "ping" => context.parent ! "pong"
+  }
+}
+```
+
+#### 使用依赖注入
+
+第一个选项是避免使用`context.parent`函数。用一个自定义的父actor创建子actor，这个自定义的父actor通过传递一个直接的引用到它的父actor。
+
+```scala
+class DependentChild(parent: ActorRef) extends Actor {
+  def receive = {
+    case "ping" => parent ! "pong"
+  }
+}
+```
+另一种方法是，你可以告诉父节点怎样创建它的子节点。有两种方式可以做到这件事：给它一个Props对象或者给它一个关注创建子actor的函数。
+
+```scala
+class DependentParent(childProps: Props) extends Actor {
+  val child = context.actorOf(childProps, "child")
+  var ponged = false
+  def receive = {
+    case "pingit" => child ! "ping"
+    case "pong"   => ponged = true
+} }
+class GenericDependentParent(childMaker: ActorRefFactory => ActorRef) extends Actor {
+  val child = childMaker(context)
+  var ponged = false
+  def receive = {
+    case "pingit" => child ! "ping"
+    case "pong"   => ponged = true
+} }
+```
+
+创建Props是直接的，但是创建函数需要像如下的测试代码：
+
+```scala
+val maker = (_: ActorRefFactory) => probe.ref
+val parent = system.actorOf(Props(classOf[GenericDependentParent], maker))
+```
+
+在你的应用程序中，可能如下面这样：
+
+```scala
+val maker = (f: ActorRefFactory) => f.actorOf(Props[Child])
+val parent = system.actorOf(Props(classOf[GenericDependentParent], maker))
+```
+#### 使用一个虚拟的父actor
+
+如果你不愿改变一个父actor或者子actor的构造器，你可以在你的测试中创建一个虚拟父actor。但是，这不允许你独立测试父actor。
+
+```scala
+"A fabricated parent" should {
+  "test its child responses" in {
+    val proxy = TestProbe()
+    val parent = system.actorOf(Props(new Actor {
+      val child = context.actorOf(Props[Child], "child")
+      def receive = {
+        case x if sender == child => proxy.ref forward x
+        case x =>child forward x
+      }
+    }))
+    proxy.send(parent, "ping")
+    proxy.expectMsg("pong")
+  }
+}
+```
+
+
+
+
+## 4 CallingThreadDispatcher
+
+如上文所述，` CallingThreadDispatcher `在单元测试中非常重要, 但最初它出现是为了在出错的时候能够生成连续的`stacktrace`。 由于这个特殊的派发器将任何消息直接运行在当前线程中，所以消息处理的完整历史信息在调用堆栈上有记录，只要所有的actor都是在这个派发器上运行。
+
+### 如何使用它
+
+只要象平常一样设置派发器:
+
+```scala
+import akka.testkit.CallingThreadDispatcher
+val ref = system.actorOf(Props[MyActor].withDispatcher(CallingThreadDispatcher.Id))
+```
+
+### 它是如何运作的
+
+在被调用时,` CallingThreadDispatcher `会检查接收消息的actor是否已经在当前线程中了。 这种情况的最简单的例子是actor向自己发送消息。 这时，不能马上对它进行处理，因为这违背了actor模型, 于是这个消息被放进队列，直到actor的当前消息被处理完毕；这样，新消息会被在调用的线程上处理，只是在actor完成其先前的工作之后。 在别的情况下，消息会在当前线程中立即得到处理。 通过这个派发器规划的Future也会立即执行。
+
+这种工作方式使` CallingThreadDispatcher `像一个为永远不会因为外部事件而阻塞的actor设计的通用派发器。
+
+在有多个线程的情况下，有可能同时有两个使用这个派发器的actor在不同线程中收到消息，它们会竞争actor锁，竞争失败的那个必须等待。 这样我们保持了actor模型，但由于使用了受限的调度我们损失了一些并发性。从这个意义上说，它等同于使用传统的基于互斥的并发。
+
+另一个困难是正确地处理挂起和继续: 当actor被挂起时，后续的消息将被放进一个`thread-local`的队列中（和正常情况下使用的队列是同一个)。 但是对resume的调用, 是由一个特定的线程执行的，系统中所有其它的线程可能并没有运行这个特定的actor，这会导致`thread-local`队列无法被它们的本地线程清空。于是，调用` resume `的线程会从所有线程收集所有当前在队列中的消息到自己的队列中，然后进行处理。
+
+### 
+
 
