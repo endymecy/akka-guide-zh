@@ -654,6 +654,79 @@ val ref = system.actorOf(Props[MyActor].withDispatcher(CallingThreadDispatcher.I
 
 另一个困难是正确地处理挂起和继续: 当actor被挂起时，后续的消息将被放进一个`thread-local`的队列中（和正常情况下使用的队列是同一个)。 但是对resume的调用, 是由一个特定的线程执行的，系统中所有其它的线程可能并没有运行这个特定的actor，这会导致`thread-local`队列无法被它们的本地线程清空。于是，调用` resume `的线程会从所有线程收集所有当前在队列中的消息到自己的队列中，然后进行处理。
 
-### 
+### 限制
+
+如果一个actor发送完消息后由于某种原因（通常是被调用actor所影响）阻塞了, 如果使用这个派发器时显然将导致死锁。这在使用基于` CountDownLatch` 同步的actor测试中很常见:
+
+```scala
+val latch = new CountDownLatch(1)
+actor ! startWorkAfter(latch)   // actor will call latch.await() before proceeding
+doSomeSetupStuff()
+latch.countDown()
+```
+这个例子将无限挂起，消息处理到达第二行永远到不了第四行，而只有在第四行才能在一个普通的派发器上取消它的阻塞。
+
+因此，记住`CallingThreadDispatcher`不是普通派发器的通用用途的替换。另一方面，在它上面允许你的actor用于测试，它是很有用的。因为如果它在机率特别高的条件下都能不死锁，那么在生产环境中也不会。
+
+> *上面这句话很遗憾并不是一个有力的保证，因为你的代码运行在不同的派发器上时可能直接或间接地改变它的行为。 如果你想要寻找帮助你debug死锁的工具, `CallingThreadDispatcher `在有些错误场合下可能会有用，但要记住它既可能给出错误的正面结果也可能给出错误的负面结果。*
+
+### 好处
+
+总结下来，`CallingThreadDispatcher`提供了如下特征。
+
+- 确定地执行单线程测试，同时保持几乎所有的actor语义
+- 在异常stacktrace中记录从失败点开始的完整的消息处理历史
+- 排除某些类的死锁情景
+
+## 5 跟踪Actor调用
+
+到目前为止所有的测试工具都针对系统的行为构造断言。 当测试失败时，通常是由你来查找原因，进行修改并进行下一轮测试。这个过程既有debugger支持，又有日志支持，又Akka工具箱提供以下日志选项:
+
+- 对Actor实例中抛出的异常记录日志
+
+相比其它的日志机制，这一条是永远打开的；它的日志级别是` ERROR`。
+
+- 对某些actor的消息记录日志
+
+这是通过在配置文件里添加设置项来打开设置项`akka.actor.debug.receive` ，它使得loggable语句作用于actor的`receive`函数:
+
+```scala
+import akka.event.LoggingReceive
+def receive = LoggingReceive {
+  case msg => // Do something ...
+}
+def otherState: Receive = LoggingReceive.withLabel("other") {
+  case msg => // Do something else ...
+}
+```
+- 如果在配置文件中没有给出上面的配置, 这个方法将直接移交给给定的` Receive `函数, 也就是说如果不打开，就没有运行时开销。
+
+这个日志功能是与指定的局部标记绑定的，因为将其应用于所有的actor可能不是你所需要的， 如果被用于EventHandler监听器它还可能导致无限循环。
+
+    - 对特殊的消息记录日志
+    
+    Actor会自动处理某些特殊消息,如 Kill, PoisonPill等等。打开对这些消息的跟踪只需要设置` akka.actor.debug.autoreceive`, 这对所有actor都有效。
+    
+    - 对actor生命周期记录日志
+    
+    Actor的创建、启动、重启、开始监控、停止监控和终止可以通过打开` akka.actor.debug.lifecycle `来跟踪; 这也是对所有 actor都有效的。
+    
+所有这些日志消息都记录在 DEBUG 级别. 总结一下, 你可以用以下配置打开对actor活动的完整日志:
+
+```scala
+akka {
+  loglevel = "DEBUG"
+  actor {
+    debug {
+      receive = on
+      autoreceive = on
+      lifecycle = on
+} }
+}
+```
+
+
+
+
 
 
