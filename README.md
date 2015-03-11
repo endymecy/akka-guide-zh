@@ -27,6 +27,7 @@
     * [Actor DSL](actors/actor-dsl.md)
 * [futures和agents](futures-and-agents/futures.md)
     * [futures](futures-and-agents/futures.md)
+    * [agents](futures-and-agents/agents.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
