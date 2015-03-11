@@ -25,7 +25,7 @@
     * [有限状态机](actors/fsm.md)
     * [测试actor系统](actors/testing-actor-systems.md)
     * [Actor DSL](actors/actor-dsl.md)
-* [futurs和agents](futures-and-agents/futures.md)
+* [futures和agents](futures-and-agents/futures.md)
     * [futures](futures-and-agents/futures.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
