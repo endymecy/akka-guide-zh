@@ -144,7 +144,54 @@ class MyOwnSerializer extends Serializer {
 
 ### Actor引用的序列化
 
-所有的` ActorRef `都是用` JavaSerializer`， 但如果你写了自己的serializer， 你可能想知道如果正确对它们进行序列化和反序列化。
+所有的` ActorRef `都是用` JavaSerializer`， 但如果你写了自己的serializer， 你可能想知道如何正确对它们进行序列化和反序列化。在一般情况下，使用的本地地址依赖于远程地址的类型，这个远程地址是序列化的信息更容易接受。如下使用`Serialization.serializedActorPath(actorRef)`。
 
+```scala
+import akka.actor.{ ActorRef, ActorSystem }
+import akka.serialization._
+import com.typesafe.config.ConfigFactory
+    // Serialize
+    // (beneath toBinary)
+    val identifier: String = Serialization.serializedActorPath(theActorRef)
+    // Then just serialize the identifier however you like
+    // Deserialize
+    // (beneath fromBinary)
+    val deserializedActorRef = extendedSystem.provider.resolveActorRef(identifier)
+    // Then just use the ActorRef
+```
+
+这假设序列化发生在通过远程传输发送消息的上下文。序列化也有其它的使用，如存储actor应用到一个actor应用程序的外面（如数据库）。在这种情况下，记住一个actor路径的地址部分决定了这个actor如何通讯是非常重要的。如果检索发生在相同的逻辑上下文，存储本地actor路径可能是更好的选择。但是，当在不同的网络主机上面反序列化它时，这是不够的：因为这需要它需要包含系统的远程传输地址。一个actor地址并没有限制只有一个远程传输地址，这使这个问题变得更加有趣。为了找到合适的地址使用，当发送`remoteAddr`时，你可以使用`ActorRefProvider.getExternalAddressFor(remoteAddr)`。
+
+```scala
+object ExternalAddress extends ExtensionKey[ExternalAddressExt]
+class ExternalAddressExt(system: ExtendedActorSystem) extends Extension {
+  def addressFor(remoteAddr: Address): Address =
+    system.provider.getExternalAddressFor(remoteAddr) getOrElse
+      (throw new UnsupportedOperationException("cannot send to " + remoteAddr))
+}
+def serializeTo(ref: ActorRef, remote: Address): String =
+  ref.path.toSerializationFormatWithAddress(ExternalAddress(extendedSystem).
+    addressFor(remote))
+```
+
+> *注：如果地址还没有`host`和`port`组件，也就是说它仅仅为本地地址插入地址信息，`ActorPath.toSerializationFormatWithAddress `和`toString`是不同的。`toSerializationFormatWithAddress`还需要添加actor的唯一的id，这个id会随着actor的停止然后以相同的名字重新创建而改变。发送消息到指向旧actor的引用将不会传送到新的actor。如果你不想这种行为，你可以使用`toStringWithAddress`，它不包含这个唯一的id*
+
+这需要你至少知道将要反序列化结果actor引用的系统支持哪种类型的地址。如果你没有具体的地址，你可以使用`Address(protocol, "", "", 0)`为正确的协议创建一个虚拟的地址。
+
+也有一个缺省的远程地址被集群支持（仅仅只有特殊的系统有）。你可以像下面这样得到它
+
+```scala
+object ExternalAddress extends ExtensionKey[ExternalAddressExt]
+class ExternalAddressExt(system: ExtendedActorSystem) extends Extension {
+  def addressForAkka: Address = system.provider.getDefaultAddress
+}
+def serializeAkkaDefault(ref: ActorRef): String =
+  ref.path.toSerializationFormatWithAddress(ExternalAddress(theActorSystem).
+    addressForAkka)
+```
+
+## 3 关于 Java 序列化
+
+如果在做Java序列化任务时不使用` JavaSerializer `， 你必须保证在动态变量`JavaSerializer.currentSystem`中提供一个有效的` ExtendedActorSystem `。 它是在读取`ActorRef`时将字符串表示转换成实际的引用。 动态变量`DynamicVariable `是一个` thread-local`变量，所以在反序列化任何可能包含actor引用的数据时要保证这个变量有值。
 
 
