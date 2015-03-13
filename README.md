@@ -31,6 +31,7 @@
 * [网络](networking/remoting.md)
     * [远程调用](networking/remoting.md)
     * [序列化](networking/serialization.md)
+    * [io](networking/io.md)
 
 本指南参考官方文档（scala版）2.3.9，详见[官方文档](http://akka.io/docs/)
 
