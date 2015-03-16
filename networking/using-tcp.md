@@ -106,3 +106,41 @@ class SimplisticHandler extends Actor {
 
 可以通过发送`Close`、`ConfirmedClose`或者`Abort`给连接actor来关闭连接。
 
+`Close`将会发送一个`FIN`请求来关闭连接，但是不会等待来自远程端点的确认。待处理的写入将会被清。如果关闭成功了，监听器将会被通知一个`Closed`。
+
+`ConfirmedClose`将通过发送一个`FIN`消息关闭连接的发送方向。但是数据将会继续被接收到直到远程的端点也关闭了连接。待处理的写入将会被清。如果关闭成功了，监听器将会被通知一个`ConfirmedClosed`。
+
+`Abort`将会发送一个`RST`消息给远程端点立即终止连接。待处理的写入将不会被清。如果关闭成功了，监听器将会被通知一个`Aborted`。
+
+如果连接已经被远程端点关闭了，`PeerClosed`将会被发送到监听者。缺省情况下，从这个端点而来的连接将会自动关闭。为了支持半关闭的连接，设置`Register`消息的`keepOpenOnPeerClosed`成员为`true`。在这种情况下，连接保持打开状态直到它接收到以上的关闭命令。
+
+不管什么时候一个错误发生了，`ErrorClosed`都将会发送给监听者，强制关闭连接。
+
+所有的关闭通知都是`ConnectionClosed`的子类型，所以不需要细粒度关闭事件的监听者可能用相同的方式处理所有的关闭事件。
+
+## 4 写入连接
+
+一旦一个连接已经建立了，可以从任意actor发送数据给它。数据的格式是`Tcp.WriteCommand. Tcp.WriteCommand`，它有三种不同的实现。
+
+- Tcp.Write。最简单的`WriteCommand`实现，它包裹一个`ByteString`实例和一个“ack”事件。这个`ByteString`拥有一个或者多个块，不可变的内存大小最大为2G。
+- Tcp.WriteFile。如果你想从一个文件发送`raw`数据，你用`Tcp.WriteFile`命令会非常有效。它允许你指定一个在磁盘上的字节块通过连接发送而不需要首先加载它们到JVM内存中。`Tcp.WriteFile`可以保持超过2G的数据以及一个`ack`事件（如果需要）。
+- Tcp.CompoundWrite。有时你可能想集合（或者交叉）几个`Tcp.Write`或者`Tcp.WriteFile`命令到一个原子的写命令，这个命令一次性完成写到连接。`Tcp.CompoundWrite`允许你这样做并且提供了三个好处。
+
+    - 1 如下面章节介绍的，TCP连接actor在某一时间仅仅能处理一个单个的写命令。通过合并多个写到一个`CompoundWrite`，你可以以最小的开销传递，并且不需要通过一个`ACK-based`的消息协议一个个的回复它们。
+    - 2 因为一个`WriteCommand`是原子的，你可以肯定其它actor不可能“注入”其它的写命令到你组合到一个`CompoundWrite`的写命令中去。几个actor写入相同的连接是一个重要的特征，这在某些情况下很难获得。
+    - 3 一个`CompoundWrite`的“子写入（sub writes）”是普通的`Write`和`WriteFile`命令，它们请求“ack”事件。这些ACKs的发出与相应地“子写入”的完成是同时。这允许你附加超过一个`Write`或者`WriteFile`。或者通过在任意的点上发送临时的ACKs去让连接actor知道传递`CompoundWrite`的进度。
+
+## 5 限制（Throttling）写和读
+
+TCP连接actor的基本模型没有内部缓冲（它在同一时刻只能处理一个写，意味着它可以缓冲一个写直到它完全传递到OS内核）。需要在用户层为读和写处理拥挤问题。
+
+对于`back-pressuring`写，有三种操作模型
+
+- ACK-based：每一个`Write`命令携带着一个任意的命令，如果这个对象不是`Tcp.NoAck`。
+
+
+
+
+
+
+
